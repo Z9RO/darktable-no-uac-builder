@@ -8,9 +8,9 @@ on:
       darktable_ref:
         description: >-
           darktable upstream ref to build — a release tag
-          (e.g. "release-4.8.0") or a full commit SHA.
+          (e.g. "release-5.4.1") or a full commit SHA.
         required: true
-        default: "release-4.8.0"
+        default: "release-5.4.1"
         type: string
 
 jobs:
