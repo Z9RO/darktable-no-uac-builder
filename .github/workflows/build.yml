@@ -162,6 +162,11 @@ jobs:
 
           path = Path(sys.argv[1])
           content = path.read_text(encoding="utf-8")
+          # Match the loop header that declares and increments the unused
+          # variable:
+          #   for(int ccc = BORDER_AROUND, col = colStart;
+          #       ccc < tileCols + BORDER_AROUND;
+          #       ccc++, col++, cfa++, idx++)
           pattern = re.compile(
               r"(for\(int ccc = BORDER_AROUND),\s*col = colStart;"
               r"(\n\s*ccc < tileCols \+ BORDER_AROUND;"
