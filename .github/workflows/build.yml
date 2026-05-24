@@ -147,7 +147,7 @@ jobs:
       #    GCC 15 reports the lmmse.c inner-loop "col" induction variable as
       #    set but unused.  darktable builds with -Werror, so remove the unused
       #    loop variable until the selected upstream ref contains the fix.
-      - name: Patch lmmse unused loop variable
+      - name: Patch darktable lmmse unused loop variable
         run: |
           LMMSE="${SRC_DIR}/src/iop/demosaicing/lmmse.c"
           if [ ! -f "${LMMSE}" ]; then
