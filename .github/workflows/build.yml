@@ -1,0 +1,243 @@
+name: Build darktable no-UAC Windows Installer
+
+# Triggered manually.  Provide the upstream darktable ref (release tag or
+# full commit SHA) you want to build from.
+on:
+  workflow_dispatch:
+    inputs:
+      darktable_ref:
+        description: >-
+          darktable upstream ref to build — a release tag
+          (e.g. "release-4.8.0") or a full commit SHA.
+        required: true
+        default: "release-4.8.0"
+        type: string
+
+jobs:
+  build:
+    name: Build darktable no-UAC installer (Windows x86_64 / UCRT64)
+    runs-on: windows-latest
+    timeout-minutes: 240
+    permissions:
+      contents: read
+
+    # All "run" steps use the MSYS2 UCRT64 shell unless they explicitly
+    # override with "shell: pwsh" or "shell: bash".
+    defaults:
+      run:
+        shell: msys2 {0}
+
+    env:
+      SRC_DIR:        ${{ github.workspace }}/src
+      BUILD_DIR:      ${{ github.workspace }}/build
+      INSTALL_PREFIX: ${{ github.workspace }}/install
+
+    steps:
+      # ── 1. Check out this builder repository ─────────────────────────────
+      - name: Checkout builder repository
+        uses: actions/checkout@v4
+        with:
+          path: builder
+
+      # ── 2. Set up MSYS2 / UCRT64 toolchain and all darktable dependencies ─
+      - uses: msys2/setup-msys2@v2
+        with:
+          msystem: UCRT64
+          update: true
+          install: >-
+            git
+            intltool
+            po4a
+          pacboy: >-
+            cc:p
+            cmake:p
+            libxslt:p
+            ninja:p
+            python:p
+            python-jsonschema:p
+            curl:p
+            drmingw:p
+            gcc-libs:p
+            gettext:p
+            gmic:p
+            graphicsmagick:p
+            gtk3:p
+            icu:p
+            imath:p
+            iso-codes:p
+            lcms2:p
+            lensfun:p
+            libavif:p
+            libgphoto2:p
+            libheif:p
+            libjpeg-turbo:p
+            libjxl:p
+            libpng:p
+            librsvg:p
+            libsecret:p
+            libtiff:p
+            libwebp:p
+            libxml2:p
+            lua54:p
+            omp:p
+            openexr:p
+            openjpeg2:p
+            osm-gps-map:p
+            portmidi:p
+            potrace:p
+            pugixml:p
+            SDL2:p
+            sqlite3:p
+            webp-pixbuf-loader:p
+            zlib:p
+
+      # ── 3. Configure git line-ending handling for MSYS2 ──────────────────
+      - name: Configure git (CRLF handling)
+        shell: bash
+        run: git config --global core.autocrlf input
+
+      # ── 4. Check out darktable at the requested ref ───────────────────────
+      #    Full history is required: darktable derives the installer version
+      #    string from "git describe", which needs the full tag ancestry.
+      - name: Checkout darktable upstream
+        uses: actions/checkout@v4
+        with:
+          repository: darktable-org/darktable
+          ref: ${{ inputs.darktable_ref }}
+          path: src
+          fetch-depth: 0
+
+      - name: Initialise darktable submodules
+        run: |
+          cd "${SRC_DIR}"
+          git submodule init
+          git config submodule.src/tests/integration.update none
+          git submodule update
+
+      # ── 5. Record the actual upstream commit for provenance ───────────────
+      - name: Record upstream commit
+        id: upstream
+        run: |
+          cd "${SRC_DIR}"
+          SHA=$(git rev-parse HEAD)
+          SHORT=$(git rev-parse --short HEAD)
+          echo "sha=${SHA}"     >> "$GITHUB_OUTPUT"
+          echo "short=${SHORT}" >> "$GITHUB_OUTPUT"
+          echo "Upstream input ref : ${{ inputs.darktable_ref }}"
+          echo "Actual commit SHA  : ${SHA}"
+
+      # ── 6. Apply no-UAC patch to the Inno Setup template ─────────────────
+      #    MUST run before cmake processes darktable.iss.in → darktable.iss.
+      #    If the patch fails the job aborts immediately; we never produce a
+      #    silently-broken installer that may still trigger UAC.
+      - name: Apply no-UAC patch to Inno Setup template
+        run: |
+          ISS_IN="${SRC_DIR}/packaging/windows/darktable.iss.in"
+          if [ ! -f "${ISS_IN}" ]; then
+            echo "ERROR: Inno Setup template not found at ${ISS_IN}" >&2
+            exit 1
+          fi
+          python3 builder/patches/apply_no_uac.py "${ISS_IN}"
+
+      # ── 7. Build a compatible version of exiv2 from source ───────────────
+      #    The MSYS2-packaged exiv2 may not match the version expected by the
+      #    darktable release being built, so we compile a known-good version.
+      - name: Build and install exiv2
+        run: |
+          git clone --branch v0.27.7 --depth 1 \
+            https://github.com/Exiv2/exiv2 src-exiv2
+          cmake -S src-exiv2 -B build-exiv2 -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DBUILD_SHARED_LIBS=ON \
+            -DEXIV2_ENABLE_BMFF=ON \
+            -DEXIV2_ENABLE_NLS=ON \
+            -DEXIV2_ENABLE_VIDEO=OFF \
+            -DEXIV2_ENABLE_WIN_UNICODE=ON \
+            -DCMAKE_INSTALL_PREFIX="${MINGW_PREFIX}"
+          cmake --build build-exiv2
+          cmake --install build-exiv2
+
+      # ── 8. Update Lensfun lens database ───────────────────────────────────
+      - name: Update Lensfun data
+        run: lensfun-update-data
+
+      # ── 9. Configure darktable ────────────────────────────────────────────
+      - name: Configure darktable
+        run: |
+          cmake -S "${SRC_DIR}" -B "${BUILD_DIR}" \
+            -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DCMAKE_INSTALL_PREFIX="${INSTALL_PREFIX}" \
+            -DBINARY_PACKAGE_BUILD=ON
+
+      # ── 10. Compile darktable ─────────────────────────────────────────────
+      - name: Build darktable
+        run: cmake --build "${BUILD_DIR}" -v -k0
+
+      # ── 11. Install darktable into the staging prefix ─────────────────────
+      - name: Install darktable
+        run: cmake --build "${BUILD_DIR}" --target install -v
+
+      # ── 12. Create multi-resolution icon for Inno Setup ──────────────────
+      - name: Create installer icon
+        run: |
+          pacboy --noconfirm -S --needed imagemagick:p
+          magick "${SRC_DIR}/data/pixmaps/256x256/darktable.png" \
+            -define icon:auto-resize="256,128,64,48,32,16" \
+            "${INSTALL_PREFIX}/dt_logo_multiresolution.ico"
+
+      # ── 13. Install Inno Setup on the Windows runner ─────────────────────
+      - name: Install Inno Setup
+        shell: pwsh
+        run: choco upgrade innosetup --no-progress
+
+      # ── 14. Compile the Inno Setup installer ─────────────────────────────
+      #    The no-UAC-patched darktable.iss was generated by cmake in BUILD_DIR.
+      #    iscc must run from INSTALL_PREFIX because that is where all staged
+      #    binaries live and where iscc expects to find them.
+      - name: Create Inno Setup installer
+        shell: pwsh
+        run: |
+          $installPrefix = "${{ env.INSTALL_PREFIX }}"
+          $buildDir      = "${{ env.BUILD_DIR }}"
+          Set-Location $installPrefix
+          Copy-Item "$buildDir\darktable.iss" -Destination "."
+          iscc "darktable.iss"
+          Move-Item "Output\*.exe" $buildDir
+
+      # ── 15. Locate the resulting installer ────────────────────────────────
+      - name: Locate installer
+        id: installer
+        run: |
+          EXE=$(find "${BUILD_DIR}" -maxdepth 1 -name "darktable-*-no-uac.exe" | head -1)
+          if [ -z "${EXE}" ]; then
+            echo "ERROR: no-uac installer .exe not found in ${BUILD_DIR}" >&2
+            ls -lh "${BUILD_DIR}"/*.exe 2>/dev/null || true
+            exit 1
+          fi
+          echo "path=${EXE}"              >> "$GITHUB_OUTPUT"
+          echo "name=$(basename ${EXE})"  >> "$GITHUB_OUTPUT"
+
+      # ── 16. Upload the installer as a GitHub Actions artifact ─────────────
+      - name: Upload installer artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: darktable-windows-no-uac-${{ steps.upstream.outputs.short }}
+          path: ${{ steps.installer.outputs.path }}
+          retention-days: 30
+
+      # ── 17. Write a build summary to the Actions job page ─────────────────
+      - name: Write build summary
+        if: always()
+        run: |
+          {
+            echo "## darktable Windows no-UAC build"
+            echo ""
+            echo "| Field | Value |"
+            echo "|-------|-------|"
+            echo "| Input ref | \`${{ inputs.darktable_ref }}\` |"
+            echo "| Actual upstream commit | \`${{ steps.upstream.outputs.sha }}\` |"
+            echo "| no-UAC patch | ✅ \`PrivilegesRequired=lowest\` |"
+            echo "| Installer file | \`${{ steps.installer.outputs.name }}\` |"
+            echo "| Build timestamp | $(date -u '+%Y-%m-%dT%H:%M:%SZ') |"
+          } >> "$GITHUB_STEP_SUMMARY"

@@ -1,0 +1,21 @@
+# Build artifacts and dependency trees — never commit these
+/build/
+/install/
+/src/
+/src-exiv2/
+/build-exiv2/
+
+# Common IDE and editor metadata
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# macOS
+.DS_Store
+
+# Python bytecode
+__pycache__/
+*.pyc
+*.pyo
