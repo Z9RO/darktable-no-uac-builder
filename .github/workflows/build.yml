@@ -149,6 +149,7 @@ jobs:
       #    loop variable until the selected upstream ref contains the fix.
       - name: Patch darktable lmmse unused loop variable
         run: |
+          : "${SRC_DIR:?SRC_DIR is not set}"
           LMMSE="${SRC_DIR}/src/iop/demosaicing/lmmse.c"
           if [ ! -f "${LMMSE}" ]; then
             echo "ERROR: lmmse source not found at ${LMMSE}" >&2
@@ -156,25 +157,34 @@ jobs:
           fi
           python3 - "${LMMSE}" <<'PY'
           import sys
+          import re
           from pathlib import Path
 
           path = Path(sys.argv[1])
           content = path.read_text(encoding="utf-8")
-          old = (
-              "for(int ccc = BORDER_AROUND, col = colStart;\n"
-              "              ccc < tileCols + BORDER_AROUND;\n"
-              "              ccc++, col++, cfa++, idx++)"
+          pattern = re.compile(
+              r"(for\(int ccc = BORDER_AROUND),\s*col = colStart;"
+              r"(\n\s*ccc < tileCols \+ BORDER_AROUND;"
+              r"\n\s*ccc\+\+),\s*col\+\+(,\s*cfa\+\+,\s*idx\+\+\))"
           )
-          new = (
-              "for(int ccc = BORDER_AROUND;\n"
-              "              ccc < tileCols + BORDER_AROUND;\n"
-              "              ccc++, cfa++, idx++)"
+          patched_pattern = re.compile(
+              r"for\(int ccc = BORDER_AROUND;"
+              r"\n\s*ccc < tileCols \+ BORDER_AROUND;"
+              r"\n\s*ccc\+\+,\s*cfa\+\+,\s*idx\+\+\)"
           )
 
-          if old in content:
-              path.write_text(content.replace(old, new, 1), encoding="utf-8")
+          matches = pattern.findall(content)
+          if len(matches) == 1:
+              path.write_text(pattern.sub(r"\1;\2\3", content, count=1), encoding="utf-8")
               print(f"Patched unused loop variable in: {path}")
-          elif new in content:
+          elif len(matches) > 1:
+              print(
+                  "ERROR: found multiple lmmse loop patterns; refusing to patch "
+                  "ambiguously.",
+                  file=sys.stderr,
+              )
+              sys.exit(1)
+          elif patched_pattern.search(content):
               print(f"lmmse unused loop variable already patched in: {path}")
           else:
               print(
