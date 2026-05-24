@@ -172,7 +172,7 @@ jobs:
 
       # ── 10. Compile darktable ─────────────────────────────────────────────
       - name: Build darktable
-        run: cmake --build "${BUILD_DIR}" -v -k0
+        run: cmake --build "${BUILD_DIR}" -v -- -k0
 
       # ── 11. Install darktable into the staging prefix ─────────────────────
       - name: Install darktable
