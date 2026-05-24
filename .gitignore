@@ -1,4 +1,4 @@
-# Build artefacts and dependency trees — never commit these
+# Build artifacts and dependency trees — never commit these
 /build/
 /install/
 /src/

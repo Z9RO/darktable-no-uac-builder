@@ -18,6 +18,8 @@ jobs:
     name: Build darktable no-UAC installer (Windows x86_64 / UCRT64)
     runs-on: windows-latest
     timeout-minutes: 240
+    permissions:
+      contents: read
 
     # All "run" steps use the MSYS2 UCRT64 shell unless they explicitly
     # override with "shell: pwsh" or "shell: bash".
