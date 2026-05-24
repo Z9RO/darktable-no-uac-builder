@@ -151,54 +151,7 @@ jobs:
         run: |
           : "${SRC_DIR:?SRC_DIR is not set}"
           LMMSE="${SRC_DIR}/src/iop/demosaicing/lmmse.c"
-          if [ ! -f "${LMMSE}" ]; then
-            echo "ERROR: lmmse source not found at ${LMMSE}" >&2
-            exit 1
-          fi
-          python3 - "${LMMSE}" <<'PY'
-          import sys
-          import re
-          from pathlib import Path
-
-          path = Path(sys.argv[1])
-          content = path.read_text(encoding="utf-8")
-          # Match the loop header that declares and increments the unused
-          # variable:
-          #   for(int ccc = BORDER_AROUND, col = colStart;
-          #       ccc < tileCols + BORDER_AROUND;
-          #       ccc++, col++, cfa++, idx++)
-          pattern = re.compile(
-              r"(for\(int ccc = BORDER_AROUND),\s*col = colStart;"
-              r"(\n\s*ccc < tileCols \+ BORDER_AROUND;"
-              r"\n\s*ccc\+\+),\s*col\+\+(,\s*cfa\+\+,\s*idx\+\+\))"
-          )
-          patched_pattern = re.compile(
-              r"for\(int ccc = BORDER_AROUND;"
-              r"\n\s*ccc < tileCols \+ BORDER_AROUND;"
-              r"\n\s*ccc\+\+,\s*cfa\+\+,\s*idx\+\+\)"
-          )
-
-          matches = pattern.findall(content)
-          if len(matches) == 1:
-              path.write_text(pattern.sub(r"\1;\2\3", content, count=1), encoding="utf-8")
-              print(f"Patched unused loop variable in: {path}")
-          elif len(matches) > 1:
-              print(
-                  "ERROR: found multiple lmmse loop patterns; refusing to patch "
-                  "ambiguously.",
-                  file=sys.stderr,
-              )
-              sys.exit(1)
-          elif patched_pattern.search(content):
-              print(f"lmmse unused loop variable already patched in: {path}")
-          else:
-              print(
-                  "ERROR: expected lmmse loop pattern was not found; "
-                  "upstream source may have changed.",
-                  file=sys.stderr,
-              )
-              sys.exit(1)
-          PY
+          python3 builder/patches/apply_lmmse_unused_col_patch.py "${LMMSE}"
 
       # ── 8. Build a compatible version of exiv2 from source ───────────────
       #    The MSYS2-packaged exiv2 may not match the version expected by the
